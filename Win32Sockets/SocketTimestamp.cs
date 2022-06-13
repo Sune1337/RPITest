@@ -16,6 +16,7 @@ public class SocketTimestamp
     private readonly Socket _socket;
     private DynamicWinsockMethods? _dynamicWinsockMethods;
     private DynamicWinsockMethods.WSARecvMsgDelegate? _wsaRecvMsg;
+    private uint _timestampId;
 
     #endregion
 
@@ -60,7 +61,7 @@ public class SocketTimestamp
                 new Interop.Interop.Winsock.TimestampingConfig
                 {
                     Flags = (uint)timestampingFlag,
-                    TxTimestampsBuffered = (ushort)(timestampingFlag == TimestampingFlag.Tx ? 1 : 0)
+                    TxTimestampsBuffered = (ushort)(timestampingFlag == TimestampingFlag.Tx ? 5 : 0)
                 }
             );
 
@@ -137,6 +138,9 @@ public class SocketTimestamp
         {
             throw new ArgumentNullException(nameof(_socket.RemoteEndPoint));
         }
+        
+        // Increase timestampId.
+        _timestampId++;
 
         var ipEndpoint = (IPEndPoint)_socket.RemoteEndPoint;
         var socketAddress = new SocketAddress(ipEndpoint.Address, ipEndpoint.Port);
@@ -159,12 +163,11 @@ public class SocketTimestamp
 
             var SOL_SOCKET = (uint)0xffff;
             var SO_TIMESTAMP_ID = (uint)0x300B;
-            var timestampId = (uint)123;
             var controlData = (Interop.Interop.Winsock.TxControlData*)controlBufferPtr;
             controlData->length = (UIntPtr)20;
             controlData->level = SOL_SOCKET;
             controlData->type = SO_TIMESTAMP_ID;
-            controlData->timestampId = timestampId;
+            controlData->timestampId = _timestampId;
             wsaMsg.controlBuffer.Length = controlBuffer.Length;
             wsaMsg.controlBuffer.Pointer = (IntPtr)controlBufferPtr;
 
@@ -178,7 +181,7 @@ public class SocketTimestamp
             }
 
             var SIO_GET_TX_TIMESTAMP = unchecked((int)2550137066);
-            var timestampIdBytes = BitConverter.GetBytes(timestampId);
+            var timestampIdBytes = BitConverter.GetBytes(_timestampId);
             var timestampBytes = new byte[8];
 
             while (true)
