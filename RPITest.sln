@@ -4,6 +4,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RPITest", "RPITest\RPITest.
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MultimediaTimer", "MultimediaTimer\MultimediaTimer.csproj", "{A7A9ECA3-91BE-4E02-8F77-5EAA343D6C13}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Win32Sockets", "Win32Sockets\Win32Sockets.csproj", "{4FD08BE9-FACB-4FF7-9627-A96ED73B8BEF}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -18,5 +20,9 @@ Global
 		{A7A9ECA3-91BE-4E02-8F77-5EAA343D6C13}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{A7A9ECA3-91BE-4E02-8F77-5EAA343D6C13}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{A7A9ECA3-91BE-4E02-8F77-5EAA343D6C13}.Release|Any CPU.Build.0 = Release|Any CPU
+		{4FD08BE9-FACB-4FF7-9627-A96ED73B8BEF}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{4FD08BE9-FACB-4FF7-9627-A96ED73B8BEF}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{4FD08BE9-FACB-4FF7-9627-A96ED73B8BEF}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{4FD08BE9-FACB-4FF7-9627-A96ED73B8BEF}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

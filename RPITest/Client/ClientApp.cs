@@ -11,13 +11,15 @@ using Google.Protobuf;
 using RPITest.Protocol;
 using RPITest.Statistics;
 
+using Win32Sockets;
+
 public class ClientApp
 {
     #region Fields
 
     private readonly ParseResult _parsedCommand;
 
-    private readonly MultimediaTimer.Timer _timer = new MultimediaTimer.Timer(10);
+    private readonly byte[] _receiveBuffer = new byte[64 * 1024];
 
     #endregion
 
@@ -27,7 +29,7 @@ public class ClientApp
     {
         var hostOption = new Option<string>("--host", getDefaultValue: () => "localhost", description: "IP address or hostname to conenct to");
         var portOption = new Option<int>("--port", getDefaultValue: () => 1000, description: "Port to connect to");
-        var rpiOption = new Option<int>("--rpi", getDefaultValue: () => 10, description: "Interval between packets to receive");
+        var rpiOption = new Option<int>("--rpi", getDefaultValue: () => 100, description: "Interval between packets to receive");
         var rootCommand = new RootCommand
         {
             hostOption,
@@ -56,6 +58,9 @@ public class ClientApp
     {
         // Start listening for UDP packets.
         using var udpClient = new UdpClient(0);
+        var socketTimestamp = new SocketTimestamp(udpClient.Client);
+        socketTimestamp.ConfigureSocket(SocketTimestamp.TimestampingFlag.Rx);
+        udpClient.Client.ReceiveTimeout = Constants.KeepaliveInterval;
 
         // Open control connection.
         using var tcpClient = new TcpClient();
@@ -72,29 +77,77 @@ public class ClientApp
         rpiRequest.WriteTo(networkStream);
 
         // Start receiving UDP packets.
-        var stopwatch = new Stopwatch();
-        stopwatch.Start();
-        decimal lastElapsed = stopwatch.ElapsedTicks;
         var rpiStatistics = new RpiStatistics();
         var localCounter = 0L;
+        decimal lastRxTimestamp = Stopwatch.GetTimestamp();
+        long lastMissingPackets = 0;
+        ReceivedInfo? lastReceivedInfo = null;
+        var lastKeepAlive = DateTime.Now;
         while (true)
         {
-            var data = await udpClient.ReceiveAsync();
-            var currentElapsed = stopwatch.ElapsedTicks;
-
-            var rpiMessageLength = BitConverter.ToInt32(data.Buffer);
-            var rpiMessage = RpiMessage.Parser.ParseFrom(data.Buffer, sizeof(int), rpiMessageLength);
+            var socketError = socketTimestamp.Receive(new Span<byte>(_receiveBuffer, 0, _receiveBuffer.Length), out var bytesTransferred, out var rxTimestamp, out var rxLatency);
+            if (socketError == SocketError.TimedOut)
+            {
+                // Send keepalive.
+                rpiRequest.WriteTo(networkStream);
+                lastKeepAlive = DateTime.Now;
+                continue;
+            }
             
-            var elapsed = (currentElapsed - lastElapsed) / TimeSpan.TicksPerMillisecond - rpi - (decimal)rpiMessage.ServerMisfire;
+            if (socketError != SocketError.Success)
+            {
+                throw new Exception($"SocketError: {socketError}");
+            }
 
-            rpiStatistics.Feed(elapsed, rpiMessage.PacketCounter - localCounter);
+            var rpiMessageLength = BitConverter.ToInt32(_receiveBuffer);
+            var rpiMessage = RpiMessage.Parser.ParseFrom(_receiveBuffer, sizeof(int), rpiMessageLength);
+            var currentMissingPackets = rpiMessage.PacketCounter - localCounter;
 
-            lastElapsed = currentElapsed;
+            // Now that server has sent TxLatency for last packet, update statistics.
+            if (lastReceivedInfo != null)
+            {
+                if (currentMissingPackets == lastMissingPackets)
+                {
+                    // Adjust elapsed time with txLatency from server.
+                    lastReceivedInfo.Elapsed -= (decimal)rpiMessage.LastTxLatency;
+                }
+
+                rpiStatistics.Feed(lastReceivedInfo.Elapsed, lastReceivedInfo.Misfire, lastReceivedInfo.RxLatency, (decimal)rpiMessage.LastTxLatency, lastMissingPackets);
+            }
+
+            var misfire = (decimal)rpiMessage.ServerMisfire;
+            var elapsed = (rxTimestamp - lastRxTimestamp) / TimeSpan.TicksPerMillisecond - rpi - misfire;
+
+            // Update last ReceivedInfo.
+            lastReceivedInfo ??= new ReceivedInfo();
+            lastReceivedInfo.Elapsed = elapsed;
+            lastReceivedInfo.Misfire = misfire;
+            lastReceivedInfo.RxLatency = rxLatency;
+
+            // Update variables that hold information from last loop.
+            lastRxTimestamp = rxTimestamp;
             localCounter++;
-        }
+            lastMissingPackets = currentMissingPackets;
 
-        stopwatch.Stop();
+            if ((DateTime.Now - lastKeepAlive).TotalMilliseconds > Constants.KeepaliveInterval)
+            {
+                // Send keepalive.
+                rpiRequest.WriteTo(networkStream);
+                lastKeepAlive = DateTime.Now;
+            }
+        }
     }
 
     #endregion
+
+    private class ReceivedInfo
+    {
+        #region Fields
+
+        public decimal Elapsed;
+        public decimal Misfire;
+        public decimal RxLatency;
+
+        #endregion
+    }
 }
