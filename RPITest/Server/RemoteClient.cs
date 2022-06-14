@@ -34,7 +34,6 @@ public class RemoteClient
     private readonly byte[] _receiveBuffer = new byte[ReceiveBufferSize];
     private readonly byte[] _sendBuffer = new byte[SendBufferSize];
 
-    private readonly Stopwatch _stopwatch = new();
     private long _counter = 0;
     private double _lastElapsed = 0;
     private double _lastTxLatency = 0;
@@ -96,8 +95,7 @@ public class RemoteClient
                     _socketTimestamp.ConfigureSocket(SocketTimestamp.TimestampingFlag.Tx);
                     _udpClient.Connect(((IPEndPoint)RemoteEndpoint!).Address, rpiRequest.Port);
 
-                    // Initialize timer-misfire counters.
-                    _stopwatch.Start();
+                    // Remember RPI to calculate timer misfire.
                     _rpi = rpiRequest.Rpi;
 
                     // Start timer to send UDP packets to client.
@@ -113,7 +111,7 @@ public class RemoteClient
                 {
                     Console.Error.WriteLine("Client timed out.");
                 }
-                
+
                 break;
             }
 
@@ -139,7 +137,6 @@ public class RemoteClient
     {
         _cancellationTokenSource.Cancel();
         TcpClient.Close();
-        _stopwatch.Stop();
         _clientStopped.WaitOne();
     }
 
@@ -149,18 +146,19 @@ public class RemoteClient
 
     private void TimerOnElapsed(object? sender, EventArgs e)
     {
+        var currentTimestamp = Stopwatch.GetTimestamp();
+
         if (_socketTimestamp == null)
         {
             return;
         }
 
-        var currentElapsed = _stopwatch.ElapsedTicks;
-        var elapsed = (currentElapsed - _lastElapsed) / TimeSpan.TicksPerMillisecond - _rpi;
-        _lastElapsed = currentElapsed;
+        var misfire = (currentTimestamp - _lastElapsed) / TimeSpan.TicksPerMillisecond - _rpi;
+        _lastElapsed = currentTimestamp;
 
         var rpiMessage = new RpiMessage
         {
-            ServerMisfire = elapsed,
+            ServerMisfire = misfire,
             PacketCounter = _counter++,
             LastTxLatency = _lastTxLatency
         };
@@ -169,8 +167,8 @@ public class RemoteClient
         rpiMessage.WriteTo(memoryStream);
         BitConverter.TryWriteBytes(_sendBuffer, (int)memoryStream.Position);
 
-        var timestampTimeout = (long)(Stopwatch.GetTimestamp() + Stopwatch.Frequency / 1000 * _rpi * 0.9);
-        var socketError = _socketTimestamp.Send(new Span<byte>(_sendBuffer), timestampTimeout, out var txTimestamp, out _lastTxLatency);
+        var timestampTimeout = Stopwatch.GetTimestamp() + TimeSpan.TicksPerMillisecond * 50;
+        var socketError = _socketTimestamp.Send(new Span<byte>(_sendBuffer), timestampTimeout, out var txTimestamp);
         if (socketError != SocketError.Success)
         {
             // Tell manager the client disconnected so it can clean up after us.
@@ -178,6 +176,9 @@ public class RemoteClient
 
             Stop();
         }
+
+        // Calculate Tx latency.
+        _lastTxLatency = (txTimestamp - currentTimestamp) / (double)TimeSpan.TicksPerMillisecond;
     }
 
     #endregion

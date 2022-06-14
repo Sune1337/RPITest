@@ -132,7 +132,7 @@ public class SocketTimestamp
         }
     }
 
-    public unsafe SocketError Send(Span<byte> buffer, long timestampTimeout, out long txTimestamp, out double txLatency)
+    public unsafe SocketError Send(Span<byte> buffer, long timestampTimeout, out long txTimestamp)
     {
         if (_socket.RemoteEndPoint == null)
         {
@@ -172,9 +172,8 @@ public class SocketTimestamp
             wsaMsg.controlBuffer.Pointer = (IntPtr)controlBufferPtr;
 
             var appTxTimestamp = Stopwatch.GetTimestamp();
-            txTimestamp = appTxTimestamp;
-            txLatency = 0;
             var socketError = Interop.Interop.Winsock.WSASendMsg(_socket.SafeHandle, &wsaMsg, SocketFlags.None, out var bytesTransferred, null, IntPtr.Zero);
+            txTimestamp = appTxTimestamp;
             if (socketError != SocketError.Success)
             {
                 return socketError;
@@ -183,7 +182,7 @@ public class SocketTimestamp
             var SIO_GET_TX_TIMESTAMP = unchecked((int)2550137066);
             var timestampIdBytes = BitConverter.GetBytes(_timestampId);
             var timestampBytes = new byte[8];
-
+            
             while (true)
             {
                 var errorCode = Interop.Interop.Winsock.WSAIoctl_Blocking(
@@ -197,7 +196,7 @@ public class SocketTimestamp
                     IntPtr.Zero,
                     IntPtr.Zero);
                 var result = errorCode == SocketError.SocketError ? (SocketError)Marshal.GetLastWin32Error() : SocketError.Success;
-
+            
                 // var result = socket.IOControl(SIO_GET_TX_TIMESTAMP, timestampIdBytes, timestampBytes);
                 if (result == SocketError.Success)
                 {
@@ -205,23 +204,22 @@ public class SocketTimestamp
                     var timestamp = BitConverter.ToInt64(timestampBytes);
                     if (timestamp > 0)
                     {
-                        var diff = timestamp - appTxTimestamp;
                         txTimestamp = timestamp;
-                        txLatency = diff * 1000.0 / Stopwatch.Frequency;
                     }
-
+            
                     break;
                 }
-
+            
                 if (result != SocketError.WouldBlock)
                 {
                     // Failed to call SIO_GET_TX_TIMESTAMP.
                     break;
                 }
-
+            
                 if (Stopwatch.GetTimestamp() > timestampTimeout)
                 {
                     // SIO_GET_TX_TIMESTAMP timed out.
+                    Console.WriteLine("SIO_GET_TX_TIMESTAMP timed out.");
                     break;
                 }
             }

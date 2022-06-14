@@ -102,6 +102,7 @@ public class ClientApp
             var rpiMessageLength = BitConverter.ToInt32(_receiveBuffer);
             var rpiMessage = RpiMessage.Parser.ParseFrom(_receiveBuffer, sizeof(int), rpiMessageLength);
             var currentMissingPackets = rpiMessage.PacketCounter - localCounter;
+            var lastTxLatency = 0m;
 
             // Now that server has sent TxLatency for last packet, update statistics.
             if (lastReceivedInfo != null)
@@ -109,14 +110,15 @@ public class ClientApp
                 if (currentMissingPackets == lastMissingPackets)
                 {
                     // Adjust elapsed time with txLatency from server.
-                    lastReceivedInfo.Elapsed -= (decimal)rpiMessage.LastTxLatency;
+                    lastTxLatency = (decimal)rpiMessage.LastTxLatency;
                 }
-
+                
+                lastReceivedInfo.Elapsed -= lastTxLatency;
                 rpiStatistics.Feed(lastReceivedInfo.Elapsed, lastReceivedInfo.Misfire, lastReceivedInfo.RxLatency, (decimal)rpiMessage.LastTxLatency, lastMissingPackets);
             }
 
             var misfire = (decimal)rpiMessage.ServerMisfire;
-            var elapsed = (rxTimestamp - lastRxTimestamp) / TimeSpan.TicksPerMillisecond - rpi - misfire;
+            var elapsed = (rxTimestamp - lastRxTimestamp) / TimeSpan.TicksPerMillisecond - rpi - misfire + lastTxLatency;
 
             // Update last ReceivedInfo.
             lastReceivedInfo ??= new ReceivedInfo();
@@ -126,8 +128,8 @@ public class ClientApp
 
             // Update variables that hold information from last loop.
             lastRxTimestamp = rxTimestamp;
-            localCounter++;
             lastMissingPackets = currentMissingPackets;
+            localCounter++;
 
             if ((DateTime.Now - lastKeepAlive).TotalMilliseconds > Constants.KeepaliveInterval)
             {
