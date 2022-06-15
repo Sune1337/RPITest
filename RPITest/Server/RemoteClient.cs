@@ -35,7 +35,7 @@ public class RemoteClient
     private readonly byte[] _sendBuffer = new byte[SendBufferSize];
 
     private long _counter = 0;
-    private double _lastElapsed = 0;
+    private double _lastTimestamp = 0;
     private double _lastTxLatency = 0;
     private int _rpi = 0;
     private SocketTimestamp? _socketTimestamp;
@@ -95,8 +95,9 @@ public class RemoteClient
                     _socketTimestamp.ConfigureSocket(SocketTimestamp.TimestampingFlag.Tx);
                     _udpClient.Connect(((IPEndPoint)RemoteEndpoint!).Address, rpiRequest.Port);
 
-                    // Remember RPI to calculate timer misfire.
+                    // Initialize variables used measure timer misfire.
                     _rpi = rpiRequest.Rpi;
+                    _lastTimestamp = Stopwatch.GetTimestamp();
 
                     // Start timer to send UDP packets to client.
                     _timer = new Timer(rpiRequest.Rpi);
@@ -153,8 +154,7 @@ public class RemoteClient
             return;
         }
 
-        var misfire = (currentTimestamp - _lastElapsed) / TimeSpan.TicksPerMillisecond - _rpi;
-        _lastElapsed = currentTimestamp;
+        var misfire = (currentTimestamp - _lastTimestamp) / TimeSpan.TicksPerMillisecond - _rpi;
 
         var rpiMessage = new RpiMessage
         {
@@ -179,6 +179,7 @@ public class RemoteClient
 
         // Calculate Tx latency.
         _lastTxLatency = (txTimestamp - currentTimestamp) / (double)TimeSpan.TicksPerMillisecond;
+        _lastTimestamp = currentTimestamp;
     }
 
     #endregion
