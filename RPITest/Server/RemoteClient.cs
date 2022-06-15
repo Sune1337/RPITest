@@ -149,6 +149,8 @@ public class RemoteClient
     {
         var currentTimestamp = Stopwatch.GetTimestamp();
 
+        #region Code is included in Tx latency.
+
         if (_socketTimestamp == null)
         {
             return;
@@ -169,6 +171,11 @@ public class RemoteClient
 
         var timestampTimeout = Stopwatch.GetTimestamp() + TimeSpan.TicksPerMillisecond * 50;
         var socketError = _socketTimestamp.Send(new Span<byte>(_sendBuffer), timestampTimeout, out var txTimestamp);
+
+        #endregion
+
+        #region Code is included in Misfire if rpi is or will be exceeded.
+
         if (socketError != SocketError.Success)
         {
             // Tell manager the client disconnected so it can clean up after us.
@@ -180,6 +187,8 @@ public class RemoteClient
         // Calculate Tx latency.
         _lastTxLatency = (txTimestamp - currentTimestamp) / (double)TimeSpan.TicksPerMillisecond;
         _lastTimestamp = currentTimestamp;
+
+        #endregion
     }
 
     #endregion

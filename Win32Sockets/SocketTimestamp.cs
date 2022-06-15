@@ -15,8 +15,8 @@ public class SocketTimestamp
 
     private readonly Socket _socket;
     private DynamicWinsockMethods? _dynamicWinsockMethods;
-    private DynamicWinsockMethods.WSARecvMsgDelegate? _wsaRecvMsg;
     private uint _timestampId;
+    private DynamicWinsockMethods.WSARecvMsgDelegate? _wsaRecvMsg;
 
     #endregion
 
@@ -55,7 +55,7 @@ public class SocketTimestamp
         {
             // Value found at https://www.magnumdb.com/search?q=IOC_VENDOR.
             // Also: https://microsoft.github.io/windows-docs-rs/doc/windows/Win32/Networking/WinSock/constant.SIO_TIMESTAMPING.html
-            var SIO_TIMESTAMPING = unchecked((int)2550137067);
+            const int SIO_TIMESTAMPING = unchecked((int)2550137067);
 
             var timestampingConfig = GetBytes(
                 new Interop.Interop.Winsock.TimestampingConfig
@@ -111,15 +111,15 @@ public class SocketTimestamp
             var appRxTimestamp = Stopwatch.GetTimestamp();
             rxTimestamp = appRxTimestamp;
             rxLatency = 0;
-            
+
             if (socketResult != SocketError.Success)
             {
                 return (SocketError)Marshal.GetLastWin32Error();
             }
 
             var controlData = (Interop.Interop.Winsock.RxControlData*)controlBufferPtr;
-            var SOL_SOCKET = 0xffff;
-            var SO_TIMESTAMP = 0x300A;
+            const int SOL_SOCKET = 0xffff;
+            const int SO_TIMESTAMP = 0x300A;
             if (controlData->level == SOL_SOCKET && controlData->type == SO_TIMESTAMP && controlData->timestamp > 0)
             {
                 var timestamp = controlData->timestamp;
@@ -134,11 +134,13 @@ public class SocketTimestamp
 
     public unsafe SocketError Send(Span<byte> buffer, long timestampTimeout, out long txTimestamp)
     {
+        #region Code is included in Tx latency.
+
         if (_socket.RemoteEndPoint == null)
         {
             throw new ArgumentNullException(nameof(_socket.RemoteEndPoint));
         }
-        
+
         // Increase timestampId.
         _timestampId++;
 
@@ -171,20 +173,27 @@ public class SocketTimestamp
             wsaMsg.controlBuffer.Length = controlBuffer.Length;
             wsaMsg.controlBuffer.Pointer = (IntPtr)controlBufferPtr;
 
-            var appTxTimestamp = Stopwatch.GetTimestamp();
             var socketError = Interop.Interop.Winsock.WSASendMsg(_socket.SafeHandle, &wsaMsg, SocketFlags.None, out var bytesTransferred, null, IntPtr.Zero);
+            var appTxTimestamp = Stopwatch.GetTimestamp();
+
+            #endregion
+
+            #region Code is included in Misfire if rpi is or will be exceeded.
+
             txTimestamp = appTxTimestamp;
             if (socketError != SocketError.Success)
             {
                 return socketError;
             }
 
-            var SIO_GET_TX_TIMESTAMP = unchecked((int)2550137066);
+            const int SIO_GET_TX_TIMESTAMP = unchecked((int)2550137066);
             var timestampIdBytes = BitConverter.GetBytes(_timestampId);
             var timestampBytes = new byte[8];
-            
+
             while (true)
             {
+                // IOctl SIO_GET_TX_TIMESTAMP never blocks; which is why we poll it in a loop.
+                // ref: https://docs.microsoft.com/en-us/windows/win32/winsock/winsock-timestamping
                 var errorCode = Interop.Interop.Winsock.WSAIoctl_Blocking(
                     _socket.SafeHandle,
                     SIO_GET_TX_TIMESTAMP,
@@ -196,8 +205,7 @@ public class SocketTimestamp
                     IntPtr.Zero,
                     IntPtr.Zero);
                 var result = errorCode == SocketError.SocketError ? (SocketError)Marshal.GetLastWin32Error() : SocketError.Success;
-            
-                // var result = socket.IOControl(SIO_GET_TX_TIMESTAMP, timestampIdBytes, timestampBytes);
+
                 if (result == SocketError.Success)
                 {
                     // Got timestamp.
@@ -206,16 +214,16 @@ public class SocketTimestamp
                     {
                         txTimestamp = timestamp;
                     }
-            
+
                     break;
                 }
-            
+
                 if (result != SocketError.WouldBlock)
                 {
                     // Failed to call SIO_GET_TX_TIMESTAMP.
                     break;
                 }
-            
+
                 if (Stopwatch.GetTimestamp() > timestampTimeout)
                 {
                     // SIO_GET_TX_TIMESTAMP timed out.
@@ -225,6 +233,8 @@ public class SocketTimestamp
             }
 
             return socketError;
+
+            #endregion
         }
     }
 
@@ -234,8 +244,8 @@ public class SocketTimestamp
 
     private static byte[] GetBytes(Interop.Interop.Winsock.TimestampingConfig config)
     {
-        int size = Marshal.SizeOf(config);
-        byte[] arr = new byte[size];
+        var size = Marshal.SizeOf(config);
+        var arr = new byte[size];
 
         IntPtr ptr = Marshal.AllocHGlobal(size);
         Marshal.StructureToPtr(config, ptr, true);
