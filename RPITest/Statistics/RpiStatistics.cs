@@ -4,9 +4,9 @@ public class RpiStatistics
 {
     #region Fields
 
-    private readonly Statistics _diffStatistics = new();
+    private readonly Statistics _jitterStatistics = new();
+    private readonly Statistics _absoluteJitterStatistics = new();
     private readonly Statistics _misfireStatistics = new();
-    private readonly Statistics _rxLatencyStatistics = new();
     private readonly Statistics _txLatencyStatistics = new();
 
     private DateTime _dateTime = DateTime.Now;
@@ -18,9 +18,9 @@ public class RpiStatistics
 
     public RpiStatistics()
     {
-        ResetStatistics(_diffStatistics);
+        ResetStatistics(_jitterStatistics);
+        ResetStatistics(_absoluteJitterStatistics);
         ResetStatistics(_misfireStatistics);
-        ResetStatistics(_rxLatencyStatistics);
         ResetStatistics(_txLatencyStatistics);
     }
 
@@ -28,24 +28,24 @@ public class RpiStatistics
 
     #region Public Methods and Operators
 
-    public void Feed(decimal diff, decimal misfire, decimal rxLatency, decimal txLatency, long numberOfMissingPackets)
+    public void Feed(decimal diff, decimal misfire, decimal txLatency, long numberOfMissingPackets)
     {
-        UpdateStatistics(diff, _diffStatistics);
+        UpdateStatistics(diff, _jitterStatistics);
+        UpdateStatistics(Math.Abs(diff), _absoluteJitterStatistics);
         UpdateStatistics(misfire, _misfireStatistics);
-        UpdateStatistics(rxLatency, _rxLatencyStatistics);
         UpdateStatistics(txLatency, _txLatencyStatistics);
         _numberOfMissingPackets = numberOfMissingPackets;
 
         if (DateTime.Now.Second != _dateTime.Second)
         {
-            Console.WriteLine($"{DateTime.Now:yyyy-MM-dd HH:mm:ss};Diff;{_diffStatistics.Count:0.###}; {_diffStatistics.Min:0.###}; {_diffStatistics.Max:0.###}; {_diffStatistics.Avg:0.###}; {_numberOfMissingPackets}");
+            Console.WriteLine($"{DateTime.Now:yyyy-MM-dd HH:mm:ss};Jitter;{_jitterStatistics.Count:0.###}; {_jitterStatistics.Min:0.###}; {_jitterStatistics.Max:0.###}; {_jitterStatistics.Avg:0.###}; {_numberOfMissingPackets}");
+            Console.WriteLine($"{DateTime.Now:yyyy-MM-dd HH:mm:ss};AbsoluteJitter;{_absoluteJitterStatistics.Count:0.###}; {_absoluteJitterStatistics.Min:0.###}; {_absoluteJitterStatistics.Max:0.###}; {_absoluteJitterStatistics.Avg:0.###}; {_numberOfMissingPackets}");
             Console.WriteLine($"{DateTime.Now:yyyy-MM-dd HH:mm:ss};Misfire;{_misfireStatistics.Count:0.###}; {_misfireStatistics.Min:0.###}; {_misfireStatistics.Max:0.###}; {_misfireStatistics.Avg:0.###}");
-            Console.WriteLine($"{DateTime.Now:yyyy-MM-dd HH:mm:ss};RxLatency;{_rxLatencyStatistics.Count:0.###}; {_rxLatencyStatistics.Min:0.###}; {_rxLatencyStatistics.Max:0.###}; {_rxLatencyStatistics.Avg:0.###}");
             Console.WriteLine($"{DateTime.Now:yyyy-MM-dd HH:mm:ss};TxLatency;{_txLatencyStatistics.Count:0.###}; {_txLatencyStatistics.Min:0.###}; {_txLatencyStatistics.Max:0.###}; {_txLatencyStatistics.Avg:0.###}");
 
-            ResetStatistics(_diffStatistics);
+            ResetStatistics(_jitterStatistics);
+            ResetStatistics(_absoluteJitterStatistics);
             ResetStatistics(_misfireStatistics);
-            ResetStatistics(_rxLatencyStatistics);
             ResetStatistics(_txLatencyStatistics);
             _dateTime = DateTime.Now;
         }

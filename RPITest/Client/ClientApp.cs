@@ -85,7 +85,7 @@ public class ClientApp
         var lastKeepAlive = DateTime.Now;
         while (true)
         {
-            var socketError = socketTimestamp.Receive(new Span<byte>(_receiveBuffer, 0, _receiveBuffer.Length), out var bytesTransferred, out var rxTimestamp, out var rxLatency);
+            var socketError = socketTimestamp.Receive(new Span<byte>(_receiveBuffer, 0, _receiveBuffer.Length), out var bytesTransferred, out var rxTimestamp);
             if (socketError == SocketError.TimedOut)
             {
                 // Send keepalive.
@@ -93,7 +93,7 @@ public class ClientApp
                 lastKeepAlive = DateTime.Now;
                 continue;
             }
-            
+
             if (socketError != SocketError.Success)
             {
                 throw new Exception($"SocketError: {socketError}");
@@ -112,9 +112,9 @@ public class ClientApp
                     // Adjust elapsed time with txLatency from server.
                     lastTxLatency = (decimal)rpiMessage.LastTxLatency;
                 }
-                
+
                 lastReceivedInfo.Elapsed -= lastTxLatency;
-                rpiStatistics.Feed(lastReceivedInfo.Elapsed, lastReceivedInfo.Misfire, lastReceivedInfo.RxLatency, (decimal)rpiMessage.LastTxLatency, lastMissingPackets);
+                rpiStatistics.Feed(lastReceivedInfo.Elapsed, lastReceivedInfo.Misfire, (decimal)rpiMessage.LastTxLatency, lastMissingPackets);
             }
 
             var misfire = (decimal)rpiMessage.ServerMisfire;
@@ -124,7 +124,6 @@ public class ClientApp
             lastReceivedInfo ??= new ReceivedInfo();
             lastReceivedInfo.Elapsed = elapsed;
             lastReceivedInfo.Misfire = misfire;
-            lastReceivedInfo.RxLatency = rxLatency;
 
             // Update variables that hold information from last loop.
             lastRxTimestamp = rxTimestamp;
@@ -148,7 +147,6 @@ public class ClientApp
 
         public decimal Elapsed;
         public decimal Misfire;
-        public decimal RxLatency;
 
         #endregion
     }

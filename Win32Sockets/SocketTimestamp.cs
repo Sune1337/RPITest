@@ -78,7 +78,7 @@ public class SocketTimestamp
         }
     }
 
-    public unsafe SocketError Receive(Span<byte> buffer, out int bytesTransferred, out long rxTimestamp, out decimal rxLatency)
+    public unsafe SocketError Receive(Span<byte> buffer, out int bytesTransferred, out long rxTimestamp)
     {
         if (_socket.LocalEndPoint == null)
         {
@@ -110,7 +110,6 @@ public class SocketTimestamp
             var socketResult = WsaRecvMsg(_socket.SafeHandle, (IntPtr)(&wsaMsg), out bytesTransferred, null, IntPtr.Zero);
             var appRxTimestamp = Stopwatch.GetTimestamp();
             rxTimestamp = appRxTimestamp;
-            rxLatency = 0;
 
             if (socketResult != SocketError.Success)
             {
@@ -122,10 +121,7 @@ public class SocketTimestamp
             const int SO_TIMESTAMP = 0x300A;
             if (controlData->level == SOL_SOCKET && controlData->type == SO_TIMESTAMP && controlData->timestamp > 0)
             {
-                var timestamp = controlData->timestamp;
-                var diff = appRxTimestamp - timestamp;
-                rxTimestamp = timestamp;
-                rxLatency = diff * 1000m / Stopwatch.Frequency;
+                rxTimestamp = controlData->timestamp;
             }
 
             return socketResult;
