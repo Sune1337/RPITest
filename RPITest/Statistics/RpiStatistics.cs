@@ -51,10 +51,10 @@ public class RpiStatistics
 
     public void FeedMissingPackets(long missingPackets)
     {
-        _jitterStatistics.MissingPackets = missingPackets;
-        _absoluteJitterStatistics.MissingPackets = missingPackets;
-        _misfireStatistics.MissingPackets = missingPackets;
-        _txLatencyStatistics.MissingPackets = missingPackets;
+        _jitterStatistics.MissingPackets += missingPackets;
+        _absoluteJitterStatistics.MissingPackets += missingPackets;
+        _misfireStatistics.MissingPackets += missingPackets;
+        _txLatencyStatistics.MissingPackets += missingPackets;
     }
 
     #endregion

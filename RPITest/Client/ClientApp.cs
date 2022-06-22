@@ -91,9 +91,8 @@ public class ClientApp
 
         // Start receiving UDP packets.
         var rpiStatistics = new RpiStatistics();
-        var localCounter = 0L;
+        var localPacketCounter = 0L;
         decimal lastRxTimestamp = NicClockCorrelation.GetTimestamp();
-        long lastMissingPackets = 0;
         ReceivedInfo? lastReceivedInfo = null;
         var lastKeepAlive = DateTime.Now;
         while (true)
@@ -115,16 +114,16 @@ public class ClientApp
             var ptpSyncMessage = MarshalHelper.FromBytes<PtpSyncMessage>(_receiveBuffer);
             var rpiMessageLength = BitConverter.ToInt32(ptpSyncMessage.Suffix);
             var rpiMessage = RpiMessage.Parser.ParseFrom(ptpSyncMessage.Suffix, sizeof(int), rpiMessageLength);
-            var currentMissingPackets = rpiMessage.PacketCounter - localCounter;
+            var currentMissingPackets = rpiMessage.PacketCounter - localPacketCounter;
             var lastTxLatency = -1m;
 
-            if (currentMissingPackets != lastMissingPackets)
+            if (currentMissingPackets > 0)
             {
-                Console.Error.WriteLine($"Missing {currentMissingPackets - lastMissingPackets} packets.");
+                Console.Error.WriteLine($"Missing {currentMissingPackets} packets.");
                 rpiStatistics.FeedMissingPackets(currentMissingPackets);
             }
 
-            if (currentMissingPackets == lastMissingPackets && rpiMessage.LastTxLatency > 0)
+            if (currentMissingPackets == 0 && rpiMessage.LastTxLatency > 0)
             {
                 // Adjust elapsed time with txLatency from server.
                 lastTxLatency = (decimal)rpiMessage.LastTxLatency;
@@ -159,8 +158,7 @@ public class ClientApp
 
             // Update variables that hold information from last loop.
             lastRxTimestamp = rxTimestamp;
-            lastMissingPackets = currentMissingPackets;
-            localCounter++;
+            localPacketCounter = rpiMessage.PacketCounter + 1;
 
             if ((DateTime.Now - lastKeepAlive).TotalMilliseconds > Constants.KeepaliveInterval)
             {
