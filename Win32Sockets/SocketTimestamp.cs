@@ -68,12 +68,17 @@ public class SocketTimestamp
             var result = _socket.IOControl(SIO_TIMESTAMPING, timestampingConfig, null);
             if (result != 0)
             {
-                Console.Error.WriteLine($"Failed to set SIO_TIMESTAMPING. result: {result}");
+                throw new Exception($"Failed to set SIO_TIMESTAMPING. result: {result}");
             }
         }
 
         catch (Exception ex)
         {
+            if (NicClockCorrelation.ClockMode == ClockModeEnum.Hardware)
+            {
+                throw;
+            }
+
             Console.Error.WriteLine($"Failed to set SIO_TIMESTAMPING. Exception: {ex.Message}");
         }
     }
