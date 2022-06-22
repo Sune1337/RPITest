@@ -1,11 +1,17 @@
 ﻿namespace RPITest.Server;
 
+using System.CommandLine;
+using System.CommandLine.Parsing;
 using System.Net;
 using System.Net.Sockets;
+
+using Win32Sockets;
 
 public class ServerApp
 {
     #region Fields
+
+    private readonly ParseResult _parsedCommand;
 
     private readonly List<RemoteClient> _remoteClients = new();
 
@@ -20,6 +26,15 @@ public class ServerApp
     public ServerApp(string[] args)
     {
         Console.CancelKeyPress += WhenCancelKeyPress;
+
+        var nicOption = new Option<string>("--nic", getDefaultValue: () => "localhost", description: "Name of NIC to use for hw timestamps");
+        var rootCommand = new RootCommand
+        {
+            nicOption
+        };
+
+        rootCommand.SetHandler(ServerAppCommand, nicOption);
+        _parsedCommand = rootCommand.Parse(args);
     }
 
     #endregion
@@ -28,25 +43,7 @@ public class ServerApp
 
     public void Run()
     {
-        // Start client and start accepting clients.
-        _tcpListener.Start();
-        AcceptClients();
-
-        // Stop timer and stop accepting clients.
-        _tcpListener.Stop();
-
-        // Disconnect all currently connected clients.
-        lock (_remoteClients)
-        {
-            foreach (var remoteClient in _remoteClients)
-            {
-                // Echo some verbose information and disconnect client.
-                Console.WriteLine($"Disconnecting client: {remoteClient.RemoteEndpoint}");
-                remoteClient.Stop();
-            }
-        }
-
-        Console.WriteLine("Quitted.");
+        _parsedCommand.Invoke();
     }
 
     #endregion
@@ -85,6 +82,49 @@ public class ServerApp
                 }
             }
         }
+    }
+
+    private async Task ServerAppCommand(string nic)
+    {
+        if (string.IsNullOrEmpty(nic))
+        {
+            throw new Exception("You must specify which NIC to use using --nic parameter.");
+        }
+
+        // Start correlating NIC and System clock.
+        NicClockCorrelation.Start(nic);
+
+        Console.Error.WriteLine("Waiting for NIC/System clock sync...");
+        NicClockCorrelation.WaitForSync();
+        Console.Error.WriteLine("In sync!");
+
+        try
+        {
+            // Start client and start accepting clients.
+            _tcpListener.Start();
+            AcceptClients();
+
+            // Stop timer and stop accepting clients.
+            _tcpListener.Stop();
+
+            // Disconnect all currently connected clients.
+            lock (_remoteClients)
+            {
+                foreach (var remoteClient in _remoteClients)
+                {
+                    // Echo some verbose information and disconnect client.
+                    Console.WriteLine($"Disconnecting client: {remoteClient.RemoteEndpoint}");
+                    remoteClient.Stop();
+                }
+            }
+        }
+
+        finally
+        {
+            NicClockCorrelation.Stop();
+        }
+
+        Console.WriteLine("Quitted.");
     }
 
     private void WhenCancelKeyPress(object? sender, ConsoleCancelEventArgs e)

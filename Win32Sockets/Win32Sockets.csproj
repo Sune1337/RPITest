@@ -7,4 +7,9 @@
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     </PropertyGroup>
 
+    <ItemGroup>
+      <PackageReference Include="MathNet.Numerics" Version="5.0.0" />
+      <PackageReference Include="Vanara.PInvoke.IpHlpApi" Version="3.4.3" />
+    </ItemGroup>
+
 </Project>

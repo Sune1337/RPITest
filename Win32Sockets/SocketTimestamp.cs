@@ -116,12 +116,20 @@ public class SocketTimestamp
                 return (SocketError)Marshal.GetLastWin32Error();
             }
 
-            var controlData = (Interop.Interop.Winsock.RxControlData*)controlBufferPtr;
-            const int SOL_SOCKET = 0xffff;
-            const int SO_TIMESTAMP = 0x300A;
-            if (controlData->level == SOL_SOCKET && controlData->type == SO_TIMESTAMP && controlData->timestamp > 0)
+            if (NicClockCorrelation.ClockMode == ClockModeEnum.Hardware)
             {
-                rxTimestamp = controlData->timestamp;
+                var controlData = (Interop.Interop.Winsock.RxControlData*)controlBufferPtr;
+                const int SOL_SOCKET = 0xffff;
+                const int SO_TIMESTAMP = 0x300A;
+                if (controlData->level == SOL_SOCKET && controlData->type == SO_TIMESTAMP && controlData->timestamp > 0)
+                {
+                    rxTimestamp = (long)controlData->timestamp;
+                }
+                else
+                {
+                    // We must have hw-clock timestamps.
+                    rxTimestamp = -1;
+                }
             }
 
             return socketResult;
@@ -182,49 +190,58 @@ public class SocketTimestamp
                 return socketError;
             }
 
-            const int SIO_GET_TX_TIMESTAMP = unchecked((int)2550137066);
-            var timestampIdBytes = BitConverter.GetBytes(_timestampId);
-            var timestampBytes = new byte[8];
-
-            while (true)
+            if (NicClockCorrelation.ClockMode == ClockModeEnum.Hardware)
             {
-                // IOctl SIO_GET_TX_TIMESTAMP never blocks; which is why we poll it in a loop.
-                // ref: https://docs.microsoft.com/en-us/windows/win32/winsock/winsock-timestamping
-                var errorCode = Interop.Interop.Winsock.WSAIoctl_Blocking(
-                    _socket.SafeHandle,
-                    SIO_GET_TX_TIMESTAMP,
-                    timestampIdBytes,
-                    timestampIdBytes.Length,
-                    timestampBytes,
-                    timestampBytes.Length,
-                    out var realOptionLength,
-                    IntPtr.Zero,
-                    IntPtr.Zero);
-                var result = errorCode == SocketError.SocketError ? (SocketError)Marshal.GetLastWin32Error() : SocketError.Success;
+                const int SIO_GET_TX_TIMESTAMP = unchecked((int)2550137066);
+                var timestampIdBytes = BitConverter.GetBytes(_timestampId);
+                var timestampBytes = new byte[8];
 
-                if (result == SocketError.Success)
+                while (true)
                 {
-                    // Got timestamp.
-                    var timestamp = BitConverter.ToInt64(timestampBytes);
-                    if (timestamp > 0)
+                    // IOctl SIO_GET_TX_TIMESTAMP never blocks; which is why we poll it in a loop.
+                    // ref: https://docs.microsoft.com/en-us/windows/win32/winsock/winsock-timestamping
+                    var errorCode = Interop.Interop.Winsock.WSAIoctl_Blocking(
+                        _socket.SafeHandle,
+                        SIO_GET_TX_TIMESTAMP,
+                        timestampIdBytes,
+                        timestampIdBytes.Length,
+                        timestampBytes,
+                        timestampBytes.Length,
+                        out var realOptionLength,
+                        IntPtr.Zero,
+                        IntPtr.Zero);
+                    var result = errorCode == SocketError.SocketError ? (SocketError)Marshal.GetLastWin32Error() : SocketError.Success;
+
+                    if (result == SocketError.Success)
                     {
-                        txTimestamp = timestamp;
+                        // Got timestamp.
+                        var timestamp = BitConverter.ToInt64(timestampBytes);
+                        if (timestamp > 0)
+                        {
+                            txTimestamp = timestamp;
+                        }
+                        else
+                        {
+                            txTimestamp = -1;
+                        }
+
+                        break;
                     }
 
-                    break;
-                }
+                    if (result != SocketError.WouldBlock)
+                    {
+                        // Failed to call SIO_GET_TX_TIMESTAMP.
+                        txTimestamp = -1;
+                        break;
+                    }
 
-                if (result != SocketError.WouldBlock)
-                {
-                    // Failed to call SIO_GET_TX_TIMESTAMP.
-                    break;
-                }
-
-                if (Stopwatch.GetTimestamp() > timestampTimeout)
-                {
-                    // SIO_GET_TX_TIMESTAMP timed out.
-                    Console.WriteLine("SIO_GET_TX_TIMESTAMP timed out.");
-                    break;
+                    if (Stopwatch.GetTimestamp() > timestampTimeout)
+                    {
+                        // SIO_GET_TX_TIMESTAMP timed out.
+                        Console.WriteLine("SIO_GET_TX_TIMESTAMP timed out.");
+                        txTimestamp = -1;
+                        break;
+                    }
                 }
             }
 

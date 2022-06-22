@@ -2,7 +2,6 @@
 
 using System.CommandLine;
 using System.CommandLine.Parsing;
-using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 
@@ -30,14 +29,16 @@ public class ClientApp
         var hostOption = new Option<string>("--host", getDefaultValue: () => "localhost", description: "IP address or hostname to conenct to");
         var portOption = new Option<int>("--port", getDefaultValue: () => 1000, description: "Port to connect to");
         var rpiOption = new Option<int>("--rpi", getDefaultValue: () => 100, description: "Interval between packets to receive");
+        var nicOption = new Option<string>("--nic", getDefaultValue: () => "localhost", description: "Name of NIC to use for hw timestamps");
         var rootCommand = new RootCommand
         {
             hostOption,
             portOption,
-            rpiOption
+            rpiOption,
+            nicOption
         };
 
-        rootCommand.SetHandler(ClientAppCommand, hostOption, portOption, rpiOption);
+        rootCommand.SetHandler(ClientAppCommand, hostOption, portOption, rpiOption, nicOption);
         _parsedCommand = rootCommand.Parse(args);
     }
 
@@ -54,10 +55,22 @@ public class ClientApp
 
     #region Methods
 
-    private async Task ClientAppCommand(string host, int port, int rpi)
+    private async Task ClientAppCommand(string host, int port, int rpi, string nic)
     {
+        if (string.IsNullOrEmpty(nic))
+        {
+            throw new Exception("You must specify which NIC to use using --nic parameter.");
+        }
+
+        // Start correlating NIC and System clock.
+        NicClockCorrelation.Start(nic);
+
+        Console.Error.WriteLine("Waiting for NIC/System clock sync...");
+        NicClockCorrelation.WaitForSync();
+        Console.Error.WriteLine("In sync!");
+
         // Start listening for UDP packets.
-        using var udpClient = new UdpClient(0);
+        using var udpClient = new UdpClient(319);
         var socketTimestamp = new SocketTimestamp(udpClient.Client);
         socketTimestamp.ConfigureSocket(SocketTimestamp.TimestampingFlag.Rx);
         udpClient.Client.ReceiveTimeout = Constants.KeepaliveInterval;
@@ -79,7 +92,7 @@ public class ClientApp
         // Start receiving UDP packets.
         var rpiStatistics = new RpiStatistics();
         var localCounter = 0L;
-        decimal lastRxTimestamp = Stopwatch.GetTimestamp();
+        decimal lastRxTimestamp = NicClockCorrelation.GetTimestamp();
         long lastMissingPackets = 0;
         ReceivedInfo? lastReceivedInfo = null;
         var lastKeepAlive = DateTime.Now;
@@ -99,31 +112,50 @@ public class ClientApp
                 throw new Exception($"SocketError: {socketError}");
             }
 
-            var rpiMessageLength = BitConverter.ToInt32(_receiveBuffer);
-            var rpiMessage = RpiMessage.Parser.ParseFrom(_receiveBuffer, sizeof(int), rpiMessageLength);
+            var ptpSyncMessage = MarshalHelper.FromBytes<PtpSyncMessage>(_receiveBuffer);
+            var rpiMessageLength = BitConverter.ToInt32(ptpSyncMessage.Suffix);
+            var rpiMessage = RpiMessage.Parser.ParseFrom(ptpSyncMessage.Suffix, sizeof(int), rpiMessageLength);
             var currentMissingPackets = rpiMessage.PacketCounter - localCounter;
-            var lastTxLatency = 0m;
+            var lastTxLatency = -1m;
 
-            // Now that server has sent TxLatency for last packet, update statistics.
-            if (lastReceivedInfo != null)
+            if (currentMissingPackets != lastMissingPackets)
             {
-                if (currentMissingPackets == lastMissingPackets)
-                {
-                    // Adjust elapsed time with txLatency from server.
-                    lastTxLatency = (decimal)rpiMessage.LastTxLatency;
-                }
-
-                lastReceivedInfo.Elapsed -= lastTxLatency;
-                rpiStatistics.Feed(lastReceivedInfo.Elapsed, lastReceivedInfo.Misfire, (decimal)rpiMessage.LastTxLatency, lastMissingPackets);
+                Console.Error.WriteLine($"Missing {currentMissingPackets - lastMissingPackets} packets.");
+                rpiStatistics.FeedMissingPackets(currentMissingPackets);
             }
 
-            var misfire = (decimal)rpiMessage.ServerMisfire;
-            var elapsed = (rxTimestamp - lastRxTimestamp) / TimeSpan.TicksPerMillisecond - rpi - misfire + lastTxLatency;
+            if (currentMissingPackets == lastMissingPackets && rpiMessage.LastTxLatency > 0)
+            {
+                // Adjust elapsed time with txLatency from server.
+                lastTxLatency = (decimal)rpiMessage.LastTxLatency;
 
-            // Update last ReceivedInfo.
-            lastReceivedInfo ??= new ReceivedInfo();
-            lastReceivedInfo.Elapsed = elapsed;
-            lastReceivedInfo.Misfire = misfire;
+                // Now that server has sent TxLatency for last packet, update statistics.
+                if (lastReceivedInfo != null)
+                {
+                    lastReceivedInfo.Elapsed -= lastTxLatency;
+
+                    rpiStatistics.Feed(lastReceivedInfo.Elapsed, lastReceivedInfo.Misfire, (decimal)rpiMessage.LastTxLatency);
+                }
+            }
+
+            var elapsed = rxTimestamp - lastRxTimestamp;
+
+            if (elapsed <= 0 || lastTxLatency <= 0 || double.IsNaN(rpiMessage.ServerMisfire))
+            {
+                // Server has sent invalid data.
+                lastReceivedInfo = null;
+            }
+            else
+            {
+                var misfire = (decimal)rpiMessage.ServerMisfire;
+
+                // Update last ReceivedInfo.
+                elapsed = NicClockCorrelation.ToSystemTicks(elapsed) / TimeSpan.TicksPerMillisecond - rpi - misfire + lastTxLatency;
+
+                lastReceivedInfo ??= new ReceivedInfo();
+                lastReceivedInfo.Elapsed = elapsed;
+                lastReceivedInfo.Misfire = misfire;
+            }
 
             // Update variables that hold information from last loop.
             lastRxTimestamp = rxTimestamp;

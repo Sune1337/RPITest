@@ -34,15 +34,15 @@ public class RemoteClient
     private readonly byte[] _receiveBuffer = new byte[ReceiveBufferSize];
     private readonly byte[] _sendBuffer = new byte[SendBufferSize];
 
+    private Socket? _clientSocket;
+
     private long _counter = 0;
-    private double _lastTimestamp = 0;
-    private double _lastTxLatency = 0;
+    private decimal _lastTimestamp = 0;
+    private decimal _lastTxLatency = 0;
     private int _rpi = 0;
     private SocketTimestamp? _socketTimestamp;
 
     private Timer? _timer;
-
-    private UdpClient? _udpClient;
 
     #endregion
 
@@ -89,15 +89,17 @@ public class RemoteClient
                     // Parse request from client.
                     rpiRequest = RpiRequest.Parser.ParseFrom(_receiveBuffer, 0, readBytes);
 
-                    // Create UDPClient to use when sending packets to client.
-                    _udpClient = new UdpClient();
-                    _socketTimestamp = new SocketTimestamp(_udpClient.Client);
+                    // Create socket to use when sending packets to client.
+                    _clientSocket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+                    _clientSocket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+                    _clientSocket.Bind(new IPEndPoint(IPAddress.Any, 319));
+                    _socketTimestamp = new SocketTimestamp(_clientSocket);
                     _socketTimestamp.ConfigureSocket(SocketTimestamp.TimestampingFlag.Tx);
-                    _udpClient.Connect(((IPEndPoint)RemoteEndpoint!).Address, rpiRequest.Port);
+                    _clientSocket.Connect(((IPEndPoint)RemoteEndpoint!).Address, 319);
 
                     // Initialize variables used measure timer misfire.
                     _rpi = rpiRequest.Rpi;
-                    _lastTimestamp = Stopwatch.GetTimestamp();
+                    _lastTimestamp = NicClockCorrelation.GetTimestamp();
 
                     // Start timer to send UDP packets to client.
                     _timer = new Timer(rpiRequest.Rpi);
@@ -131,6 +133,7 @@ public class RemoteClient
             ClientDisconnect?.Invoke(this);
         }
 
+        _clientSocket?.Close();
         _clientStopped.Set();
     }
 
@@ -147,7 +150,7 @@ public class RemoteClient
 
     private void TimerOnElapsed(object? sender, EventArgs e)
     {
-        var currentTimestamp = Stopwatch.GetTimestamp();
+        var currentHwTimestamp = NicClockCorrelation.GetTimestamp();
 
         #region Code is included in Tx latency.
 
@@ -156,21 +159,27 @@ public class RemoteClient
             return;
         }
 
-        var misfire = (currentTimestamp - _lastTimestamp) / TimeSpan.TicksPerMillisecond - _rpi;
+        var misfire = NicClockCorrelation.ToSystemTicks(currentHwTimestamp - _lastTimestamp) / TimeSpan.TicksPerMillisecond - _rpi;
 
         var rpiMessage = new RpiMessage
         {
-            ServerMisfire = misfire,
+            ServerMisfire = currentHwTimestamp < _lastTimestamp ? double.NaN : (double)misfire,
             PacketCounter = _counter++,
-            LastTxLatency = _lastTxLatency
+            LastTxLatency = (double)_lastTxLatency
         };
 
+        // Serialize protobuf message.
         using var memoryStream = new MemoryStream(_sendBuffer, sizeof(int), _sendBuffer.Length - sizeof(int));
         rpiMessage.WriteTo(memoryStream);
         BitConverter.TryWriteBytes(_sendBuffer, (int)memoryStream.Position);
 
-        var timestampTimeout = Stopwatch.GetTimestamp() + TimeSpan.TicksPerMillisecond * 50;
-        var socketError = _socketTimestamp.Send(new Span<byte>(_sendBuffer), timestampTimeout, out var txTimestamp);
+        // Create PtpSyncMessage.
+        var ptpSyncMessage = new PtpSyncMessage(2);
+        Array.Copy(_sendBuffer, ptpSyncMessage.Suffix, memoryStream.Position + sizeof(int));
+        var ptpSyncMessageBytes = MarshalHelper.GetBytes(ptpSyncMessage);
+
+        var timestampTimeout = Stopwatch.GetTimestamp() + TimeSpan.TicksPerMillisecond * 100;
+        var socketError = _socketTimestamp.Send(new Span<byte>(ptpSyncMessageBytes), timestampTimeout, out var txTimestamp);
 
         #endregion
 
@@ -185,8 +194,8 @@ public class RemoteClient
         }
 
         // Calculate Tx latency.
-        _lastTxLatency = (txTimestamp - currentTimestamp) / (double)TimeSpan.TicksPerMillisecond;
-        _lastTimestamp = currentTimestamp;
+        _lastTxLatency = NicClockCorrelation.ToSystemTicks(txTimestamp - currentHwTimestamp) / TimeSpan.TicksPerMillisecond;
+        _lastTimestamp = currentHwTimestamp;
 
         #endregion
     }
