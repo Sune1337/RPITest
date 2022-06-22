@@ -242,6 +242,10 @@ public class SocketTimestamp
                         txTimestamp = -1;
                         break;
                     }
+
+                    // Calling Sleep(0) causes SIO_GET_TX_TIMESTAMP to complete faster.
+                    // Don't know how that works...
+                    Thread.Sleep(0);
                 }
             }
 
